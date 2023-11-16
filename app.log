@@ -1,0 +1,16 @@
+INFO:root:Found 2 identical images
+INFO:root:{
+    "./images/111.jpg": {
+        "duplicates_count": 2,
+        "duplicates": [
+            "./images/11.jpg",
+            "./images/1.jpg"
+        ]
+    },
+    "./images/copy_1.jpg": {
+        "duplicates_count": 1,
+        "duplicates": [
+            "./images/copy_2.jpg"
+        ]
+    }
+}

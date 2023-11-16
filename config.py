@@ -1,0 +1,14 @@
+IMAGE_DIR = "./images"  # Path to the directory with images
+IMAGE_EXTENSIONS = ("jpg", "jpeg", "png", "bmp")  # Image file extensions
+EMBEDDING_SIZE = 256  # Embedding/image size
+REMOVE_DUPLICATES = False  # Flag for removing duplicates
+FEATURES_DF_PATH = './features_df.tsv'  # Path to the dataframe with image features
+BATCH_SIZE = 64  # Batch size
+IMAGE_ENCODER = 'vit_relpos_base_patch32_plus_rpn_256'  # Image encoder to use
+PUT_SIMILAR_IN_FOLDERS = True  # Flag for placing similar images in separate folders
+DIR_FOR_SIMILARS = './similar'  # Directory for saving similar images
+USE_DBSCAN_CLUSTERING = True  # Flag to use DBSCAN clustering otherwise distances
+DISTANCE_THRESHOLD = 3.0  # Distance threshold
+MIN_CLUSTER_SAMPLES = 1  # Minimum number of samples in a cluster
+DBSCAN_EPSILON = 5.0  # Epsilon parameter for DBSCAN
+REMOVE_SIMILAR = False  # Flag for removing similar images
