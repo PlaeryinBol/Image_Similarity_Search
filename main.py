@@ -58,8 +58,9 @@ class ImageProcessor():
         log.info(json.dumps(duplicates_info, indent=4))
 
         if config.REMOVE_DUPLICATES:
-            for f in duplicates:
-                os.remove(f)
+            for f in duplicates_info:
+                for d in duplicates_info[f]['duplicates']:
+                    os.remove(d)
 
         self.image_paths = list(set(self.image_paths) - set(duplicates))
         return
