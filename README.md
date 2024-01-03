@@ -13,7 +13,7 @@ As a result, groups of images that are similar to each other will be placed in s
 Depending on how similar images you want to find, you will need to choose your own *DISTANCE_THRESHOLD* or *DBSCAN_EPSILON* parameter value. This can be easily done by looking at the search results in the *DIR_FOR_SIMILARS* folder.
 
 ## Examples
-By comparing embeddings, you can find similar images like this that are similar in meaning, and if necessary, remove semantic duplicates like this.
+By comparing embeddings, you can find similar images like this that are similar in meaning, and if necessary, remove semantic duplicates like this:
 
 <p>
   <img src="./images/similar_1.jpg" width="200" />
