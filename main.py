@@ -1,182 +1,127 @@
-import glob
-import json
-import logging
-import os
-import shutil
-from collections import defaultdict
+#!/usr/bin/env python3
+"""
+Tool for finding similar images and removing duplicates
+"""
 
-import pandas as pd
-import torch
-from PIL import Image, ImageChops
-from scipy.spatial.distance import cdist
-from sklearn.cluster import DBSCAN
-from tqdm import tqdm
+import argparse
 
 import config
-from encoder import EncoderCNN
-from image_dataset import ImageDataset
+from finder import find_image_files
+from tracker import cleanup_deleted_files, find_files_to_delete
+from processor import process_single_image
+from logger import get_logger, setup_logger
+from saver import save_groups
+from similarity import find_similar_pairs, group_similar_images
 
-logging.basicConfig(filename="app.log", level=logging.INFO, filemode="w")
-log = logging.getLogger()
 
+def find_duplicates():
+    """Main function for finding duplicates"""
+    logger = get_logger()
 
-class ImageProcessor():
-    def __init__(self):
-        self.image_paths = glob.glob(f"{config.IMAGE_DIR}/**/*.*", recursive=True)
-        self.image_paths = [file for file in self.image_paths if file.endswith(config.IMAGE_EXTENSIONS)]
-        self.find_identical_images()
+    try:
+        logger.info("=== Duplicate Image Finder ===")
 
-        self.dataset = ImageDataset(self.image_paths)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.features_df = self.create_features_df()
+        # Step 1: Read configuration
+        logger.info("📋 Reading configuration...")
+        input_dir = config.INPUT_DIR
+        output_dir = config.OUTPUT_DIR
+        threshold = config.THRESHOLD
 
-    def find_identical_images(self):
-        """Finds identical images based on file size and removes duplicates if specified."""
-        size_dict = {}
-        duplicates_info = defaultdict(lambda: {'duplicates_count': 0, 'duplicates': []})
-        duplicates = defaultdict(set)
-        for filename in tqdm(self.image_paths, desc='Find identical images'):
-            filename = os.fsdecode(filename)
-            f_info = os.stat(filename)
+        logger.info(f"  Input folder: {input_dir}")
+        logger.info(f"  Output folder: {output_dir}")
+        logger.info(f"  Similarity threshold: {threshold}")
 
-            if f_info.st_size not in size_dict:
-                size_dict[f_info.st_size] = filename
-            else:
-                image_1 = Image.open(filename).convert('RGB')
-                image_2 = Image.open(size_dict[f_info.st_size]).convert('RGB')
-                difference = ImageChops.difference(image_1, image_2)
-                diff_bbox = difference.getbbox()
+        # Step 2: Search for image files
+        logger.info("🔍 Searching for image files...")
+        image_files = find_image_files(input_dir)
 
-                if diff_bbox is not None:
-                    continue
+        if not image_files:
+            logger.error("❌ No images found!")
+            return
 
-                duplicates[f_info.st_size].add(filename)
-                duplicates_info[size_dict[f_info.st_size]]['duplicates_count'] += 1
-                duplicates_info[size_dict[f_info.st_size]]['duplicates'].append(filename)
+        logger.info(f"  Images found: {len(image_files)}")
 
-        log.info(f'Found {len(duplicates)} identical images')
-        log.info(json.dumps(duplicates_info, indent=4))
+        # Step 3: Process images (using improved algorithm)
+        logger.info("🖼️  Processing images...")
 
-        if config.REMOVE_DUPLICATES:
-            for f in duplicates_info:
-                for d in duplicates_info[f]['duplicates']:
-                    os.remove(d)
+        # Use improved processing for more accurate hashing
+        image_data = []
+        from tqdm import tqdm
+        for file_path in tqdm(image_files, desc="Processing images", unit="file"):
+            image_hash = process_single_image(file_path)
+            if image_hash is not None:
+                image_data.append((file_path, image_hash))
 
-        self.image_paths = list(set(self.image_paths) - set(duplicates))
+        if not image_data:
+            logger.error("❌ Failed to process any images!")
+            return
+
+        logger.info(f"  Successfully processed: {len(image_data)} of {len(image_files)}")
+
+        # Step 4: Find similar pairs
+        logger.info("🔗 Finding similar images...")
+        similar_pairs = find_similar_pairs(image_data, threshold)
+
+        if not similar_pairs:
+            logger.info("✅ No similar images found!")
+            return
+
+        logger.info(f"  Similar pairs found: {len(similar_pairs)}")
+
+        # Step 5: Group similar images
+        logger.info("📁 Grouping similar images...")
+        groups = group_similar_images(similar_pairs)
+
+        if not groups:
+            logger.error("❌ Failed to create groups!")
+            return
+
+        logger.info(f"  Groups created: {len(groups)}")
+        for i, group in enumerate(groups, 1):
+            logger.info(f"    Group {i}: {len(group)} images")
+
+        # Step 6: Save results
+        logger.info("💾 Saving results...")
+        save_groups(groups, output_dir)
+
+        logger.info("✅ Processing completed successfully!")
+
+    except KeyboardInterrupt:
+        logger.warning("⏹️  Processing interrupted by user")
+    except Exception as e:
+        logger.error(f"❌ An error occurred: {e}")
         return
 
-    def create_features_df(self):
-        """
-        Creates a DataFrame of image features using an encoder model.
-        If the DataFrame already exists, it is loaded from disk.
-        Returns:
-            The DataFrame of image features.
-        """
-        if os.path.exists(config.FEATURES_DF_PATH):
-            features_df = pd.read_table(config.FEATURES_DF_PATH)
-            return features_df
 
-        dataloader = torch.utils.data.DataLoader(self.dataset, batch_size=config.BATCH_SIZE, shuffle=False)
-        encoder = EncoderCNN().to(self.device).eval()
+def main():
+    """Main function with command-line argument handling"""
+    # Set up logging before anything else
+    setup_logger()
+    logger = get_logger()
 
-        data = []
-        for images_batch, paths in tqdm(dataloader, desc="Create features df"):
-            images = images_batch.to(self.device)
-            encoder.zero_grad()
-            with torch.no_grad():
-                features = encoder(images)
-            batch_df = pd.DataFrame(features.cpu().numpy(), index=paths)
-            data.append(batch_df)
+    parser = argparse.ArgumentParser(description="Tool for finding similar images")
+    parser.add_argument(
+        '--action',
+        choices=['find', 'check-deleted', 'cleanup'],
+        default='find',
+        help='Action: find (find duplicates), check-deleted (find files to delete), cleanup (delete files)'
+    )
 
-        features_df = pd.concat(data).reset_index(drop=True)
-        features_df.insert(0, 'image_paths', self.image_paths)
-        features_df.to_csv(config.FEATURES_DF_PATH, sep='\t', index=False)
-        return features_df
+    args = parser.parse_args()
 
-    def find_similar_by_distance(self):
-        """
-        Finds similar images based on distance between their features.
-        Returns:
-            A tuple containing a dictionary of image information and a set of similar images.
-        """
-        distances = cdist(self.features_df.iloc[:, 1:].values, self.features_df.iloc[:, 1:].values, metric='euclidean')
+    try:
+        if args.action == 'find':
+            find_duplicates()
+        elif args.action == 'check-deleted':
+            logger.info("🔍 Searching for files to delete...")
+            find_files_to_delete()
+        elif args.action == 'cleanup':
+            logger.info("🗑️  Deleting files...")
+            cleanup_deleted_files()
 
-        similar_images, image_info = set(), {}
-        for i in tqdm(range(len(distances)), desc="Search similar by distance"):
-            for j in range(i+1, len(distances)):
-
-                if distances[i, j] > config.DISTANCE_THRESHOLD:
-                    continue
-
-                first_img = self.features_df['image_paths'][i]
-                second_img = self.features_df['image_paths'][j]
-                similar_images.add(second_img)
-
-                if first_img in image_info:
-                    image_info[first_img].append(second_img)
-                else:
-                    image_info[first_img] = [second_img]
-
-        return image_info, similar_images
-
-    def find_similar_by_dbscan(self):
-        """
-        Finds similar images using the DBSCAN clustering algorithm.
-        Returns:
-            A tuple containing a dictionary of image information and a set of similar images.
-        """
-        print('Start DBSCAN clustering...')
-        model = DBSCAN(min_samples=config.MIN_CLUSTER_SAMPLES, eps=config.DBSCAN_EPSILON, n_jobs=-1)
-        predicted_labels = model.fit_predict(self.features_df.iloc[:, 1:].values)
-        clusters = (pd.DataFrame({"image_paths": self.features_df['image_paths'], "label": predicted_labels})
-                    .sort_values(["label", "image_paths"], ascending=False))
-
-        # select one of elements from each cluster to keep
-        list_to_keep = set(clusters.groupby("label")["image_paths"].first())
-        all_files = set(clusters["image_paths"])
-        similar_images = all_files - list_to_keep
-
-        image_info = {}
-        for _, paths in clusters[clusters["label"].duplicated(keep=False)].groupby("label")["image_paths"]:
-            image_info[paths.iloc[0]] = paths.iloc[1:].values
-
-        return image_info, similar_images
-
-    def find_similar(self):
-        """
-        Finds similar images and performs actions based on the configuration settings.
-        If config.PUT_SIMILAR_IN_FOLDERS is True, it creates folders for similar images and copies them into folders.
-        If config.REMOVE_SIMILAR is True, it removes the similar images from config.IMAGE_DIR.
-        Returns:
-            None
-        """
-        if config.PUT_SIMILAR_IN_FOLDERS:
-            shutil.rmtree(config.DIR_FOR_SIMILARS, ignore_errors=True)
-            os.makedirs(config.DIR_FOR_SIMILARS)
-
-        if not config.USE_DBSCAN_CLUSTERING:
-            image_info, similar_images = self.find_similar_by_distance()
-        else:
-            image_info, similar_images = self.find_similar_by_dbscan()
-
-        for k, sim in tqdm(image_info.items()):
-            log.info(f'Too similar for "{os.path.basename(k)}":\n{list(map(os.path.basename, sim))}\n')
-            if config.PUT_SIMILAR_IN_FOLDERS and not config.REMOVE_SIMILAR:
-                dir_name = os.path.join(config.DIR_FOR_SIMILARS, os.path.splitext(os.path.basename(k))[0])
-
-                if os.path.exists(dir_name):
-                    shutil.rmtree(dir_name)
-
-                os.makedirs(dir_name)
-                shutil.copy(k, os.path.join(dir_name, os.path.basename(k)))
-                for el in sim:
-                    shutil.copy(el, os.path.join(dir_name, os.path.basename(el)))
-
-        if config.REMOVE_SIMILAR and not config.PUT_SIMILAR_IN_FOLDERS:
-            for f in similar_images:
-                os.remove(f)
+    except Exception as e:
+        logger.error(f"❌ Critical error occurred: {e}")
 
 
-if __name__ == '__main__':
-    image_processor = ImageProcessor()
-    image_processor.find_similar()
+if __name__ == "__main__":
+    main()

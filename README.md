@@ -1,26 +1,97 @@
-# Search for too similar images by their embeddings
+# Image Similarity Search
 
-## Project Overview
-Sometimes I have a directory with many images that contains a lot of similar images (with different names) among them. I use the distance between embeddings as a measure of similarity to find such images via DBSCAN.
+Finds groups of similar images and organizes them into folders for subsequent deletion.  
+(Method for searching using embeddings is available in the `by_embeddings` branch)
 
-## Usage
-Specify all the required values in the `config.py`, then run
+## Culling Process for Similar Images
+
+1) Edit the `config.py` file.
+
+2) Find duplicates (main function):
 ```bash
-$ python main.py
+python main.py --action find
 ```
-As a result, groups of images that are similar to each other will be placed in separate folders in the *DIR_FOR_SIMILARS* folder.
+As a result, you will get sets of folders, each containing a group of similar images. The name of each file is the encoded full path to the original file.
 
-Depending on how similar images you want to find, you will need to choose your own *DISTANCE_THRESHOLD* or *DBSCAN_EPSILON* parameter value. This can be easily done by looking at the search results in the *DIR_FOR_SIMILARS* folder.
+3) Manually select the images that are not needed by deleting them from the folders.
 
-## Examples
-By comparing embeddings, you can find similar images like this that are similar in meaning, and if necessary, remove semantic duplicates like this:
+4) After deleting, run:
+```bash
+python main.py --action check-deleted
+```
+As a result, you will get a file containing the full paths to the images that need to be deleted.
 
-<p>
-  <img src="./images/similar_1.jpg" width="200" />
-  <img src="./images/similar_2.jpg" width="450" />
-</p>
+5) Delete the original files:
+```bash
+python main.py --action cleanup
+```
 
-<p>
-  <img src="./images/similar_3.jpg" width="200" />
-  <img src="./images/similar_4.jpg" width="450" />
-</p>
+### Workflow Example
+
+**Situation**: You have 3 similar photos of one event:
+- `/photos/vacation1.jpg` (best quality)
+- `/photos/vacation1_copy.jpg` (duplicate)
+- `/photos/vacation1_old.jpg` (poor quality)
+
+**Step 1**: Run `python main.py --action find`
+- The program finds these 3 files as similar.
+- It copies them to `/output/1/photos_vacation1.jpg`, `/output/1/photos_vacation1_copy.jpg`, and `/output/1/photos_vacation1_old.jpg`.
+
+**Step 2**: Manual sorting in `/output/1/`
+- You review the files and decide to keep only `photos_vacation1.jpg` (the best quality one).
+- You delete `photos_vacation1_copy.jpg` and `photos_vacation1_old.jpg` from the folder.
+
+**Step 3**: Run `python main.py --action check-deleted`
+- The program sees that `photos_vacation1_copy.jpg` and `photos_vacation1_old.jpg` have been deleted.
+- It writes the original paths to `to_delete.txt`: `/photos/vacation1_copy.jpg` and `/photos/vacation1_old.jpg`.
+
+**Step 4**: Run `python main.py --action cleanup`
+- The program deletes the original files `/photos/vacation1_copy.jpg` and `/photos/vacation1_old.jpg`.
+- Only `/photos/vacation1.jpg` remains in the source folder.
+
+## How It Works
+
+1.  **File Search**: The program recursively scans the specified folder.
+2.  **Image Processing**: Each image is:
+    - Loaded and checked for validity.
+    - Converted to grayscale (to remove color influence).
+    - Resized to a standard size of 1024x1024.
+    - A hash is calculated for comparison.
+3.  **Similarity Search**: The hashes of all images are compared.
+4.  **Grouping**: Similar images are grouped together.
+5.  **Saving**: Each group is saved into a separate numbered folder.
+6.  **Tracking**: File mapping information is saved in the `INFO_FILE`.
+
+## Result Format
+
+### Folder Structure
+```
+output/
+├── 1/
+│   ├── home_user_photos_image1.jpg
+│   ├── home_user_vacation_image1_copy.jpg
+│   └── home_user_backup_image1_duplicate.png
+├── 2/
+│   ├── home_user_photos_image2.jpg
+│   └── home_user_work_similar_image.jpg
+├── 3/
+│   └── ...
+├── info.txt              # Mapping of original paths to saved files
+└── to_delete.txt         # List of files to delete
+```
+
+### Tracking Files
+
+**info.txt** (JSON format):
+```json
+{
+  "/home/user/photos/image1.jpg": "/output/1/home_user_photos_image1.jpg",
+  "/home/user/vacation/image1_copy.jpg": "/output/1/home_user_vacation_image1_copy.jpg"
+}
+```
+
+**to_delete.txt** (line by line):
+```
+/home/user/photos/image1.jpg
+/home/user/vacation/image1_copy.jpg
+```
